@@ -119,7 +119,7 @@ Hostname: dev-machine-01
 User: student
 RAM: 5983MB free / 7796MB total
 Swap: 2047MB total / 512MB free
-Virtual memory: 134217728 kB
+Virtual memory: 134217 MB
 Processors: 16
 Load average: 0.12, 0.45, 0.91
 Drives:
