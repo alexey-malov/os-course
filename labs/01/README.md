@@ -61,7 +61,7 @@ Architecture: x64 (AMD64)
 RAM: 6417MB / 7796MB
 Virtual Memory: 16000MB
 Memory Load: 47%
-Pagefile: 20480MB
+Pagefile: 20480MB / 32000MB
 
 Processors: 16
 Drives:
