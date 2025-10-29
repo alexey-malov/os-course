@@ -8,6 +8,18 @@
       - [R/M (Referenced/Modified): кто и когда ставит](#rm-referencedmodified-кто-и-когда-ставит)
       - [Повтор после Page Fault](#повтор-после-page-fault)
       - [Бонус за двухуровневую таблицу страниц — 30 баллов](#бонус-за-двухуровневую-таблицу-страниц--30-баллов)
+    - [Задание №2 — Обработчик Page Fault и алгоритмы вытеснения страниц — 100 баллов](#задание-2--обработчик-page-fault-и-алгоритмы-вытеснения-страниц--100-баллов)
+      - [Дано](#дано)
+      - [Первоначальная инициализация таблицы страниц](#первоначальная-инициализация-таблицы-страниц)
+      - [Обработчик Page Fault-ов](#обработчик-page-fault-ов)
+      - [2) Реализуйте один из алгоритм вытеснения: Aging или WSClock](#2-реализуйте-один-из-алгоритм-вытеснения-aging-или-wsclock)
+      - [3) Подсчёт Page Fault-ов и «идеального» числа (OPT)](#3-подсчёт-page-fault-ов-и-идеального-числа-opt)
+      - [Протокол «повтор после Page Fault»](#протокол-повтор-после-page-fault)
+      - [Своп-подсистема (упрощённая)](#своп-подсистема-упрощённая)
+      - [Безопасность: «page fault в обработчике page fault»](#безопасность-page-fault-в-обработчике-page-fault)
+      - [Учёт и отчёт](#учёт-и-отчёт)
+      - [Тестирование](#тестирование)
+      - [Бонус в 30 баллов за двухуровневую таблицу страниц](#бонус-в-30-баллов-за-двухуровневую-таблицу-страниц)
 
 ## Задания
 
@@ -98,7 +110,7 @@ class OSHandler
 public:
   virtual ~OSHandler() = default;
   virtual bool OnPageFault(VirtualMemory& vm, uint32 virtualPageNumber,
-                           Access access, PageFaultReason reason, ) = 0;
+                           Access access, PageFaultReason reason) = 0;
   // Разместите здесь прочие методы-обработчики, если нужно
 };
 
@@ -139,6 +151,8 @@ struct PTE
   void SetNX(bool v) { raw = v ? (raw | NX) : (raw & ~NX); }
 };
 
+enum class Privilege{User, Supervisor};
+
 class VirtualMemory
 {
 public:
@@ -146,21 +160,21 @@ public:
 
   // Задать физический адрес таблицы страниц (должен быть кратен 4096 байтам).
   void SetPageTableAddress(uint32_t physicalAddress);
+  [[nodiscard]] uint32_t GetPageTableAddress() const noexcept;
 
   // Операции чтения. Может вызвать обработчик ОС в следующих ситуациях:
   // чтение невыровненных данных, физическая страница отсутствует, нарушение прав доступа и т.п.
-  uint8_t Read8(uint32_t address, bool execute = false, bool isSupervisor = false) const;
-  uint16_t Read16(uint32_t address, bool execute = false, bool isSupervisor = false) const;
-  uint32_t Read32(uint32_t address, bool execute = false, bool isSupervisor = false) const;
-  uint64_t Read64(uint32_t address, bool execute = false, bool isSupervisor = false) const;
+  [[nodiscard]] uint8_t Read8(uint32_t address, Privilege privilege, bool execute = false) const;
+  [[nodiscard]] uint16_t Read16(uint32_t address, Privilege privilege, bool execute = false) const;
+  [[nodiscard]] uint32_t Read32(uint32_t address, Privilege privilege, bool execute = false) const;
+  [[nodiscard]] uint64_t Read64(uint32_t address, Privilege privilege, bool execute = false) const;
 
   // Операции записи. Может вызвать обработчик ОС в следующих ситуациях:
   // запись невыровненных данных, физическая страница отсутствует, нарушение прав доступа и т.п.
-  void Write8(uint32_t address, uint8_t value, bool isSupervisor = false);
-  void Write16(uint32_t address, uint16_t value, bool isSupervisor = false);
-  void Write32(uint32_t address, uint32_t value, bool isSupervisor = false);
-  void Write64(uint32_t address, uint64_t value, bool isSupervisor = false);
-private:
+  void Write8(uint32_t address, uint8_t value, Privilege privilege);
+  void Write16(uint32_t address, uint16_t value, Privilege privilege);
+  void Write32(uint32_t address, uint32_t value, Privilege privilege);
+  void Write64(uint32_t address, uint64_t value, Privilege privilege);
 };
 ```
 
@@ -168,16 +182,16 @@ private:
 
 | Параметры вызова | Проверки PTE | Результат |
 |---|---|---|
-| `Read*` (`execute=false`, `isSupervisor=false`) | `P=1`, `US=User` (или `US=Supervisor` запрещён), NX игнорируется | Успех → R=1 |
-| `Read*` (`execute=false`, `isSupervisor=true`)  | `P=1` (Supervisor доступен), NX игнорируется | Успех → R=1 |
-| `Read*` (`execute=true`, `isSupervisor=false`)  | `P=1`, `US=User`, **NX=0** | Успех → R=1 |
-| `Read*` (`execute=true`, `isSupervisor=true`)   | `P=1`, **NX=0** | Успех → R=1 |
-| `Write*` (`isSupervisor=false`) | `P=1`, `US=User`, **RW=1**, NX игнорируется | Успех → R=1, M=1 |
-| `Write*` (`isSupervisor=true`)  | `P=1`, **RW=1** | Успех → R=1, M=1 |
+| `Read*` (`execute=false`, `Privilege::User`) | `P=1`, `US=User` (или `US=Supervisor` запрещён), NX игнорируется | Успех → R=1 |
+| `Read*` (`execute=false`, `Privilege::Supervisor`)  | `P=1` (Supervisor доступен), NX игнорируется | Успех → R=1 |
+| `Read*` (`execute=true`, `Privilege::Supervisor`)  | `P=1`, `US=User`, **NX=0** | Успех → R=1 |
+| `Read*` (`execute=true`, `Privilege::Supervisor`)   | `P=1`, **NX=0** | Успех → R=1 |
+| `Write*` (`Privilege::User`) | `P=1`, `US=User`, **RW=1**, NX игнорируется | Успех → R=1, M=1 |
+| `Write*` (`Privilege::Supervisor`)  | `P=1`, **RW=1** | Успех → R=1, M=1 |
 
 Примечания:
 
-- «User не может в Supervisor-страницы»: если `isSupervisor=false`, то доступ к странице с `US=Supervisor` — Page Fault.
+- «User не может в Supervisor-страницы»: если `Privilege::User`, то доступ к странице с `US=Supervisor` вызывает Page Fault.
 - `execute=true` проверяет **только** NX (и, конечно, `P`/`US`); чтение отдельно не проверяется (Execute ⇒ Read).
 - Запись требует **RW=1**; чтение отдельно не проверяется (Write ⇒ Read).
 
@@ -212,3 +226,140 @@ private:
 - Каждая запись в этой таблице Page Table (PTE) хранит frame + флаги.
 
 Все 3 узла (PDE, PTE и флаги PDE) должны проверяться на P=1 и права доступа, а биты A/D обновляться как на PTE так и PDE.
+
+### Задание №2 — Обработчик Page Fault и алгоритмы вытеснения страниц — 100 баллов
+
+- Реализовать обработчик прерывания страницы (Page Fault) поверх уже сделанного вами симулятора `VirtualMemory`/`PhysicalMemory`.
+- Внедрить **практически применимый алгоритм замещения** (на выбор: **Aging** или **WSClock**).
+- Параллельно **собирать строку обращений** к страницам (reference string)
+  и **подсчитывать оптимальное число промахов** по алгоритму Бэлайда (**OPT/MIN**) для сравнения.
+
+#### Дано
+
+- `PhysicalMemory` (физическая память, 4 КиБ страницы).
+- `VirtualMemory` (трансляция VA→PA по таблицам страниц; флаги `P/R/W/US/NX`, биты `R/M`; вызов `OSHandler::OnPageFault`).
+- Контракт `OSHandler` – вы реализуете `class MyOS : public OSHandler`.
+
+Рекомендую воспользоваться вспомогательными классами VMContext, VMUserContext и VMSupervisorContext,
+чтобы не передавать режим User/Supervisor при каждом доступе к виртуальной памяти.
+
+```cpp
+class VMContext
+{
+public:
+  [[nodiscard]] uint8_t Read8(uint32_t address, bool execute = false) const;
+  [[nodiscard]] uint16_t Read16(uint32_t address, bool execute = false) const;
+  [[nodiscard]] uint32_t Read32(uint32_t address, bool execute = false) const;
+  [[nodiscard]] uint64_t Read64(uint32_t address, bool execute = false) const;
+  void Write8(uint32_t address, uint8_t value);
+  void Write16(uint32_t address, uint16_t value);
+  void Write32(uint32_t address, uint32_t value);
+  void Write64(uint32_t address, uint64_t value);;
+protected:
+  explicit VMContext(VirtualMemory& vm, Privilege privilege);
+  VirtualMemory& GetVM() const noexcept;
+private:
+  VirtualMemory* m_vm;
+  Privilege m_privilege;
+};
+
+class VMUserContext : public VMContext
+{
+public:
+  explicit VMUserContext(VirtualMemory& vm): VMContext{ vm, Privilege::User }{}
+};
+
+class VMSupervisorContext : public VMContext
+{
+public:
+  explicit VMUserContext(VirtualMemory& vm): VMContext{ vm, Privilege::Supervisor }{}
+  void SetPageTableAddress(uint32_t physicalAddress);
+  uint32_t GetPageTableAddress() const noexcept;
+};
+```
+
+#### Первоначальная инициализация таблицы страниц
+
+- Ваш менеджер памяти должен сперва проинициализировать таблицу страниц физической памяти,
+  а затем все дальнейшие операции над ней выполнять только через виртуальную память.
+- Страницы виртуальной памяти, в которых располагаются таблицы страниц,
+  должны быть доступны только в режиме супервизора.
+
+#### Обработчик Page Fault-ов
+
+Реализовать `MyOS::OnPageFault(VirtualMemory& vm, uint32_t vpn, Access access, PageFaultReason reason)`:
+
+- **Классификация причины:** P=0 (страница не в памяти)
+  / нарушение прав (RW/NX/US) / невыровненный доступ (по правилам задания №1).
+- **Стратегия подкачки:**
+  - **Local replacement** (вытесняем в пределах «рабочего набора» текущего процесса/адресного пространства).
+  - Если свободный фрейм есть — загрузить страницу в него.
+  - Если нет — выбрать жертву по выбранному алгоритму (в зависимости от выбранного варианта).
+- **Запись в своп:**
+  - Если жертва `M=1` — записать в «swap-файл» и проставить «номер слота».
+  - Если `M=0` — запись не нужна.
+- **Загрузка из свопа/с диска:** при P=0:
+  - Если страница была ранее выгружена — прочесть из своп-слота.
+  - Если страница «никогда не загружалась» — инициализировать нулями.
+- **Обновление PTE:**
+  - Установить `P=1`, сбросить `R=0`, `M=0`.
+  - Корректно проставить права (RW/US/NX) по политике ОС.
+  - (В модели `VirtualMemory` допускается менять PTE через `vm`/`physical` с `isSupervisor=true`.)
+- **Повтор операции:** после возврата из `OnPageFault` попытка доступа **повторяется** (см. протокол ниже).
+
+#### 2) Реализуйте один из алгоритм вытеснения: Aging или WSClock
+
+#### 3) Подсчёт Page Fault-ов и «идеального» числа (OPT)
+
+- Во время работы `VirtualMemory` **собирайте строку обращений** к виртуальным страницам: `(vpn, access, t)`.
+- Напишите офлайн-процедуру **моделирования OPT** (Бэлайда/MIN):
+  - На фиксированном числе фреймов, при известной полной строке обращений,
+    при промахе вытесняем страницу,
+    чьё **следующее использование дальше всего в будущем** (или никогда).
+- Сравнить: фактические PF вашего алгоритма vs PF(OPT) на том же reference string.
+
+#### Протокол «повтор после Page Fault»
+
+- После вызова `OnPageFault(vm, vpn, access, reason)` реализация `VirtualMemory` **обязана повторить** перевод и попытку доступа.
+- Повтор считается успешным, если теперь `P=1` и права удовлетворены (`US/RW/NX`).
+- Иначе — операция завершится ошибкой/исключением уровня VM.
+
+#### Своп-подсистема (упрощённая)
+
+Для хранения страниц реализуйте класс `SwapManager`:
+
+```cpp
+class SwapManager
+{
+public:
+  explicit SwapManager(VMSupervisorContext& vmContext, const std::filesystem::path& path);
+  uint32_t AllocateSlot(uint32_t virtualPageNumber);
+  void FreeSlot(uint32_t virtualPageNumber);
+  // Считывает страницу из swap-файла 
+  void ReadPage(uint32_t slot, uint32_t virtualPageNumber);
+  // Записывает страницу в файл
+  void WritePage(uint32_t slot, uint32_t virtualPageNumber);
+};
+```
+
+#### Безопасность: «page fault в обработчике page fault»
+
+- В `VirtualMemory` предусмотрите **детектор ре-ентрантного fault**:
+  если в момент `OnPageFault` обработчик обращается к странице `P=0` и возникает **второй** page fault,
+  отметьте это как **фатальную ошибку ядра** (например, `KernelPanic`/`DoubleFault`).
+- В MyOS пре
+
+#### Учёт и отчёт
+
+- Добавьте счётчики:
+  - Общее число page faults.
+  - Число записей в своп / чтений из свопа.
+  - Ретавлидные метрики (например, процент dirty-эвиктов).
+- Сравнение: PF(ваш алгоритм) vs PF(OPT) (на тех же входных данных).
+
+#### Тестирование
+
+Для класса  `MyOS` (и, если понадобится, для других) напишите юнит-тесты.
+
+#### Бонус в 30 баллов за двухуровневую таблицу страниц
+
