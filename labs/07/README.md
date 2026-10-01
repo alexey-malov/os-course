@@ -150,9 +150,16 @@ sha256sum fat32.img
 
 ```bash
 mkdir ~/flash_img
-sudo mount fat32.img ~/flash_img -o loop
+sudo losetup -fP fat32.img # Создает /dev/loop0 и /dev/loop0p1
+sudo mount /dev/loop0p1 ~/flash_img 
 ls ~/flash_img
 ```
+
+Поскольку образ fat32.img является копией всего диска (включая таблицу разделов), команда sudo mount fat32.img -o loop не сработает, так как файловая система FAT32 начинается не с нулевого байта. Необходимо либо:
+
+- Указать конкретный раздел (/dev/sdb) после сканирования через losetup -P (как показано выше).
+
+- Указать смещение начала раздела, например: sudo mount fat32.img ~/flash_img -o loop,offset=1048576.
 
 Убедитесь, что содержимое идентично исходной флешке.
 
