@@ -584,7 +584,7 @@ build/release/game-sim \
 Для потока `i` Game Quality Score использует вспомогательную шкалу
 
 $$
-Q_i = 100 \cdot \operatorname{clip}_{[0,1]}
+Q_i = 100 \cdot {clip}_{[0,1]}
 \left(\frac{D_i-P99(R_i)}{D_i-C_i}\right),
 $$
 
