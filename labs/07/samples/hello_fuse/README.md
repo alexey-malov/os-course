@@ -1,4 +1,0 @@
-
-```bash
-sudo apt update
-```
